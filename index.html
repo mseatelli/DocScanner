@@ -3,45 +3,57 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DocScanner Pro - Vision</title>
+    <title>DocScanner Pro - Local Storage & PDF</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="onOpenCvReady();"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        .camera-box { position: relative; width: 100%; aspect-ratio: 3/4; bg-black; border-radius: 24px; overflow: hidden; border: 2px solid #334155; }
+        #videoInput { width: 100%; height: 100%; object-fit: cover; }
+        #canvasOutput { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+    </style>
 </head>
 <body class="bg-slate-900 text-white font-sans overflow-x-hidden">
 
     <div class="max-w-lg mx-auto p-4 flex flex-col min-h-screen">
         <header class="py-4 flex justify-between items-center">
-            <h1 class="text-2xl font-black text-green-500 italic">DocScanner</h1>
-            <span id="status" class="text-[10px] bg-red-900 px-2 py-1 rounded">Moteur Vision: OFF</span>
+            <div>
+                <h1 class="text-2xl font-black text-green-500 italic">DocScanner</h1>
+                <p class="text-[10px] text-slate-400 uppercase tracking-widest">Génération PDF Locale</p>
+            </div>
+            <span id="status" class="text-[10px] bg-red-900 px-2 py-1 rounded font-bold">Moteur Vision: OFF</span>
         </header>
 
-        <div class="relative w-full aspect-[3/4] bg-black rounded-3xl overflow-hidden border-2 border-slate-700 shadow-2xl">
-            <video id="videoInput" class="absolute inset-0 w-full h-full object-cover" autoplay playsinline muted></video>
-            <canvas id="canvasOutput" class="absolute inset-0 w-full h-full z-10 pointer-events-none"></canvas>
+        <div class="camera-box shadow-2xl">
+            <video id="videoInput" autoplay playsinline muted></video>
+            <canvas id="canvasOutput"></canvas>
             <div id="aiOverlay" class="absolute top-4 left-4 z-20 bg-black/60 px-3 py-1 rounded-full text-[10px] font-bold text-green-400 border border-green-500/50">
-                RECHERCHE DOCUMENT...
+                INITIALISATION...
             </div>
         </div>
 
         <div class="mt-6 space-y-4">
-            <div class="bg-slate-800 p-4 rounded-2xl shadow-inner">
-                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-2 tracking-widest">Classification</label>
+            <div class="bg-slate-800 p-4 rounded-2xl">
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-2">Catégorie de document</label>
                 <select id="catSelect" class="w-full bg-slate-700 border-none p-4 rounded-xl text-sm appearance-none focus:ring-2 focus:ring-green-500">
                     </select>
             </div>
 
-            <button onclick="captureAndSave()" id="captureBtn" disabled class="w-full bg-green-600 disabled:bg-slate-800 disabled:text-slate-600 py-5 rounded-2xl font-black text-lg shadow-lg active:scale-95 transition-all">
-                SCANNER ET ENREGISTRER
+            <button onclick="captureAndDownload()" id="captureBtn" disabled class="w-full bg-green-600 disabled:bg-slate-800 disabled:text-slate-600 py-5 rounded-2xl font-black text-lg shadow-lg active:scale-95 transition-all">
+                SCANNER ET TÉLÉCHARGER PDF
             </button>
         </div>
 
-        <div class="mt-8">
-            <h2 class="text-xs font-bold text-slate-500 uppercase mb-4 italic">Historique LocalStorage (Persistant)</h2>
+        <div class="mt-8 pb-10">
+            <h2 class="text-xs font-bold text-slate-500 uppercase mb-4 italic">Documents enregistrés (LocalStorage)</h2>
             <div id="storageHistory" class="space-y-3"></div>
         </div>
     </div>
 
+    <canvas id="captureCanvas" style="display:none;"></canvas>
+
     <script>
+        const { jsPDF } = window.jspdf;
         const categories = [
             "01 — IDENTITÉ", "02 — ÉTAT_CIVIL", "03 — ADMINISTRATION", "04 — FINANCES",
             "05 — FISCALITÉ", "06 — EMPLOI_RH", "07 — PROFESSIONNEL", "08 — LOGEMENT",
@@ -50,13 +62,13 @@
             "17 — CORRESPONDANCE", "18 — PERSONNEL", "19 — ARCHIVES", "20 — AUTRE"
         ];
 
-        // Injection des 20 catégories
+        // Remplissage du select
         const select = document.getElementById('catSelect');
         categories.forEach(cat => {
             let opt = document.createElement('option');
             opt.value = cat;
             opt.innerHTML = cat;
-            if(cat.startsWith("20")) opt.selected = true;
+            if(cat.startsWith("13")) opt.selected = true;
             select.appendChild(opt);
         });
 
@@ -65,7 +77,7 @@
 
         function onOpenCvReady() {
             document.getElementById('status').innerText = "Moteur Vision: ON";
-            document.getElementById('status').className = "text-[10px] bg-green-900 px-2 py-1 rounded";
+            document.getElementById('status').className = "text-[10px] bg-green-600 px-2 py-1 rounded font-bold";
             document.getElementById('captureBtn').disabled = false;
             initCamera();
         }
@@ -73,7 +85,7 @@
         async function initCamera() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }, 
+                    video: { facingMode: "environment", width: { ideal: 1280 } }, 
                     audio: false 
                 });
                 video.srcObject = stream;
@@ -82,7 +94,7 @@
                     startProcessing();
                 };
             } catch (err) {
-                alert("Erreur Caméra : Assurez-vous d'être en HTTPS et d'avoir autorisé l'accès.");
+                alert("Erreur Caméra. Note: HTTPS est obligatoire pour la caméra.");
             }
         }
 
@@ -95,6 +107,7 @@
                 if (!video.srcObject) return;
                 cap.read(src);
                 cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
+                cv.GaussianBlur(dst, dst, new cv.Size(5, 5), 0);
                 cv.Canny(dst, dst, 50, 150);
 
                 let contours = new cv.MatVector();
@@ -103,15 +116,17 @@
 
                 const canvas = document.getElementById('canvasOutput');
                 const ctx = canvas.getContext('2d');
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
+                canvas.width = video.clientWidth;
+                canvas.height = video.clientHeight;
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-                let maxArea = 0;
-                let maxIdx = -1;
+                const scaleX = canvas.width / src.cols;
+                const scaleY = canvas.height / src.rows;
+
+                let maxArea = 0, maxIdx = -1;
                 for (let i = 0; i < contours.size(); ++i) {
                     let area = cv.contourArea(contours.get(i));
-                    if (area > 10000 && area > maxArea) {
+                    if (area > 5000 && area > maxArea) {
                         maxArea = area;
                         maxIdx = i;
                     }
@@ -121,11 +136,14 @@
                     let approx = new cv.Mat();
                     cv.approxPolyDP(contours.get(maxIdx), approx, 0.02 * cv.arcLength(contours.get(maxIdx), true), true);
                     if (approx.rows === 4) {
-                        drawFrame(ctx, approx);
-                        document.getElementById('aiOverlay').innerText = "DOCUMENT PRÊT";
-                        document.getElementById('aiOverlay').classList.replace('text-green-400', 'text-yellow-400');
+                        drawFrame(ctx, approx, scaleX, scaleY);
+                        document.getElementById('aiOverlay').innerText = "DOCUMENT DÉTECTÉ";
+                        document.getElementById('aiOverlay').className = "absolute top-4 left-4 z-20 bg-green-600 px-3 py-1 rounded-full text-[10px] font-bold text-white";
                     }
                     approx.delete();
+                } else {
+                    document.getElementById('aiOverlay').innerText = "RECHERCHE...";
+                    document.getElementById('aiOverlay').className = "absolute top-4 left-4 z-20 bg-black/60 px-3 py-1 rounded-full text-[10px] font-bold text-green-400";
                 }
                 contours.delete(); hierarchy.delete();
                 requestAnimationFrame(process);
@@ -133,35 +151,60 @@
             requestAnimationFrame(process);
         }
 
-        function drawFrame(ctx, approx) {
+        function drawFrame(ctx, approx, sx, sy) {
             ctx.beginPath();
             ctx.strokeStyle = "#00FF00";
-            ctx.lineWidth = 8;
+            ctx.lineWidth = 6;
             let pts = approx.data32S;
-            ctx.moveTo(pts[0], pts[1]);
-            for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i+1]);
+            ctx.moveTo(pts[0] * sx, pts[1] * sy);
+            for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i] * sx, pts[i+1] * sy);
             ctx.closePath();
             ctx.stroke();
         }
 
-        function captureAndSave() {
+        async function captureAndDownload() {
             const cat = document.getElementById('catSelect').value;
-            const doc = { id: Date.now(), cat: cat, date: new Date().toLocaleDateString('fr-FR') };
+            const timestamp = Date.now();
+            
+            // 1. Capture de l'image réelle
+            const captureCanvas = document.getElementById('captureCanvas');
+            captureCanvas.width = video.videoWidth;
+            captureCanvas.height = video.videoHeight;
+            const ctx = captureCanvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
+            const imgData = captureCanvas.toDataURL('image/jpeg', 0.8);
+
+            // 2. Création du PDF
+            const pdf = new jsPDF({
+                orientation: video.videoWidth > video.videoHeight ? 'l' : 'p',
+                unit: 'px',
+                format: [video.videoWidth, video.videoHeight]
+            });
+            pdf.addImage(imgData, 'JPEG', 0, 0, video.videoWidth, video.videoHeight);
+            
+            // 3. Téléchargement réel (ira dans /Downloads)
+            const fileName = `DocScanner_${cat.split(' ')[0]}_${timestamp}.pdf`;
+            pdf.save(fileName);
+
+            // 4. Persistance dans le LocalStorage pour l'historique
+            const scan = { id: timestamp, cat: cat, date: new Date().toLocaleDateString('fr-FR'), file: fileName };
             let scans = JSON.parse(localStorage.getItem('doc_scans')) || [];
-            scans.unshift(doc);
+            scans.unshift(scan);
             localStorage.setItem('doc_scans', JSON.stringify(scans));
+            
             renderHistory();
+            alert("PDF généré et envoyé dans vos téléchargements !");
         }
 
         function renderHistory() {
             const scans = JSON.parse(localStorage.getItem('doc_scans')) || [];
             document.getElementById('storageHistory').innerHTML = scans.map(s => `
-                <div class="bg-slate-800 p-4 rounded-xl border-l-4 border-green-500 flex justify-between items-center">
+                <div class="bg-slate-800 p-4 rounded-xl border-l-4 border-green-500 flex justify-between items-center text-xs">
                     <div>
-                        <p class="text-[10px] text-slate-500 uppercase font-bold">${s.cat}</p>
-                        <p class="text-sm">Document_Scan_${s.id.toString().slice(-5)}</p>
+                        <p class="font-bold text-slate-300">${s.cat}</p>
+                        <p class="text-slate-500">${s.file}</p>
                     </div>
-                    <span class="text-[10px] text-slate-600 italic">${s.date}</span>
+                    <span class="text-slate-600">${s.date}</span>
                 </div>
             `).join('');
         }
