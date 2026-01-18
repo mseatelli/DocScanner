@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DocScanner Pro - Local Storage & PDF</title>
+    <title>DocScanner Pro - Fix Vision</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="onOpenCvReady();"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
-        .camera-box { position: relative; width: 100%; aspect-ratio: 3/4; bg-black; border-radius: 24px; overflow: hidden; border: 2px solid #334155; }
+        .camera-box { position: relative; width: 100%; aspect-ratio: 3/4; background: black; border-radius: 24px; overflow: hidden; border: 2px solid #334155; }
         #videoInput { width: 100%; height: 100%; object-fit: cover; }
         #canvasOutput { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
     </style>
@@ -19,7 +19,7 @@
         <header class="py-4 flex justify-between items-center">
             <div>
                 <h1 class="text-2xl font-black text-green-500 italic">DocScanner</h1>
-                <p class="text-[10px] text-slate-400 uppercase tracking-widest">Génération PDF Locale</p>
+                <p class="text-[10px] text-slate-400 uppercase tracking-widest">LocalStorage & PDF Download</p>
             </div>
             <span id="status" class="text-[10px] bg-red-900 px-2 py-1 rounded font-bold">Moteur Vision: OFF</span>
         </header>
@@ -28,14 +28,14 @@
             <video id="videoInput" autoplay playsinline muted></video>
             <canvas id="canvasOutput"></canvas>
             <div id="aiOverlay" class="absolute top-4 left-4 z-20 bg-black/60 px-3 py-1 rounded-full text-[10px] font-bold text-green-400 border border-green-500/50">
-                INITIALISATION...
+                ATTENTE CAMERA...
             </div>
         </div>
 
         <div class="mt-6 space-y-4">
             <div class="bg-slate-800 p-4 rounded-2xl">
-                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-2">Catégorie de document</label>
-                <select id="catSelect" class="w-full bg-slate-700 border-none p-4 rounded-xl text-sm appearance-none focus:ring-2 focus:ring-green-500">
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-2">Classification</label>
+                <select id="catSelect" class="w-full bg-slate-700 border-none p-4 rounded-xl text-sm appearance-none focus:ring-2 focus:ring-green-500 text-white">
                     </select>
             </div>
 
@@ -45,7 +45,7 @@
         </div>
 
         <div class="mt-8 pb-10">
-            <h2 class="text-xs font-bold text-slate-500 uppercase mb-4 italic">Documents enregistrés (LocalStorage)</h2>
+            <h2 class="text-xs font-bold text-slate-500 uppercase mb-4 italic">Historique LocalStorage (Persistant)</h2>
             <div id="storageHistory" class="space-y-3"></div>
         </div>
     </div>
@@ -62,18 +62,17 @@
             "17 — CORRESPONDANCE", "18 — PERSONNEL", "19 — ARCHIVES", "20 — AUTRE"
         ];
 
-        // Remplissage du select
         const select = document.getElementById('catSelect');
         categories.forEach(cat => {
             let opt = document.createElement('option');
-            opt.value = cat;
-            opt.innerHTML = cat;
+            opt.value = cat; opt.innerHTML = cat;
             if(cat.startsWith("13")) opt.selected = true;
             select.appendChild(opt);
         });
 
         let video = document.getElementById('videoInput');
         let src, dst, cap;
+        let isProcessing = false;
 
         function onOpenCvReady() {
             document.getElementById('status').innerText = "Moteur Vision: ON";
@@ -85,128 +84,127 @@
         async function initCamera() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "environment", width: { ideal: 1280 } }, 
+                    video: { facingMode: "environment" }, 
                     audio: false 
                 });
                 video.srcObject = stream;
                 video.onloadedmetadata = () => {
                     video.play();
-                    startProcessing();
+                    // On attend que la vidéo soit vraiment prête pour définir les tailles
+                    setTimeout(startProcessing, 1000);
                 };
             } catch (err) {
-                alert("Erreur Caméra. Note: HTTPS est obligatoire pour la caméra.");
+                alert("Erreur Caméra : HTTPS requis.");
             }
         }
 
         function startProcessing() {
-            src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
-            dst = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC1);
-            cap = new cv.VideoCapture(video);
+            if (isProcessing) return;
             
+            // CORRECTION CRUCIALE : On utilise video.videoWidth/Height réels
+            const width = video.videoWidth;
+            const height = video.videoHeight;
+            
+            if (width === 0 || height === 0) {
+                setTimeout(startProcessing, 500);
+                return;
+            }
+
+            src = new cv.Mat(height, width, cv.CV_8UC4);
+            dst = new cv.Mat(height, width, cv.CV_8UC1);
+            cap = new cv.VideoCapture(video);
+            isProcessing = true;
+            
+            console.log("Moteur démarré avec succès : " + width + "x" + height);
+
             const process = () => {
-                if (!video.srcObject) return;
-                cap.read(src);
-                cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
-                cv.GaussianBlur(dst, dst, new cv.Size(5, 5), 0);
-                cv.Canny(dst, dst, 50, 150);
+                if (!isProcessing) return;
+                try {
+                    cap.read(src);
+                    cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
+                    cv.GaussianBlur(dst, dst, new cv.Size(5, 5), 0);
+                    cv.Canny(dst, dst, 50, 150);
 
-                let contours = new cv.MatVector();
-                let hierarchy = new cv.Mat();
-                cv.findContours(dst, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+                    let contours = new cv.MatVector();
+                    let hierarchy = new cv.Mat();
+                    cv.findContours(dst, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-                const canvas = document.getElementById('canvasOutput');
-                const ctx = canvas.getContext('2d');
-                canvas.width = video.clientWidth;
-                canvas.height = video.clientHeight;
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    const canvas = document.getElementById('canvasOutput');
+                    const ctx = canvas.getContext('2d');
+                    canvas.width = video.clientWidth;
+                    canvas.height = video.clientHeight;
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-                const scaleX = canvas.width / src.cols;
-                const scaleY = canvas.height / src.rows;
+                    const scaleX = canvas.width / width;
+                    const scaleY = canvas.height / height;
 
-                let maxArea = 0, maxIdx = -1;
-                for (let i = 0; i < contours.size(); ++i) {
-                    let area = cv.contourArea(contours.get(i));
-                    if (area > 5000 && area > maxArea) {
-                        maxArea = area;
-                        maxIdx = i;
+                    let maxArea = 0, maxIdx = -1;
+                    for (let i = 0; i < contours.size(); ++i) {
+                        let area = cv.contourArea(contours.get(i));
+                        if (area > 5000 && area > maxArea) {
+                            maxArea = area;
+                            maxIdx = i;
+                        }
                     }
-                }
 
-                if (maxIdx !== -1) {
-                    let approx = new cv.Mat();
-                    cv.approxPolyDP(contours.get(maxIdx), approx, 0.02 * cv.arcLength(contours.get(maxIdx), true), true);
-                    if (approx.rows === 4) {
-                        drawFrame(ctx, approx, scaleX, scaleY);
-                        document.getElementById('aiOverlay').innerText = "DOCUMENT DÉTECTÉ";
-                        document.getElementById('aiOverlay').className = "absolute top-4 left-4 z-20 bg-green-600 px-3 py-1 rounded-full text-[10px] font-bold text-white";
+                    if (maxIdx !== -1) {
+                        let approx = new cv.Mat();
+                        cv.approxPolyDP(contours.get(maxIdx), approx, 0.02 * cv.arcLength(contours.get(maxIdx), true), true);
+                        if (approx.rows === 4) {
+                            ctx.beginPath();
+                            ctx.strokeStyle = "#00FF00";
+                            ctx.lineWidth = 6;
+                            let pts = approx.data32S;
+                            ctx.moveTo(pts[0] * scaleX, pts[1] * scaleY);
+                            for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i] * scaleX, pts[i+1] * scaleY);
+                            ctx.closePath();
+                            ctx.stroke();
+                            document.getElementById('aiOverlay').innerText = "DOCUMENT DÉTECTÉ";
+                        }
+                        approx.delete();
+                    } else {
+                        document.getElementById('aiOverlay').innerText = "RECHERCHE DOCUMENT...";
                     }
-                    approx.delete();
-                } else {
-                    document.getElementById('aiOverlay').innerText = "RECHERCHE...";
-                    document.getElementById('aiOverlay').className = "absolute top-4 left-4 z-20 bg-black/60 px-3 py-1 rounded-full text-[10px] font-bold text-green-400";
+                    contours.delete(); hierarchy.delete();
+                } catch (e) {
+                    console.error("Erreur de processing:", e);
                 }
-                contours.delete(); hierarchy.delete();
                 requestAnimationFrame(process);
             };
             requestAnimationFrame(process);
         }
 
-        function drawFrame(ctx, approx, sx, sy) {
-            ctx.beginPath();
-            ctx.strokeStyle = "#00FF00";
-            ctx.lineWidth = 6;
-            let pts = approx.data32S;
-            ctx.moveTo(pts[0] * sx, pts[1] * sy);
-            for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i] * sx, pts[i+1] * sy);
-            ctx.closePath();
-            ctx.stroke();
-        }
-
         async function captureAndDownload() {
             const cat = document.getElementById('catSelect').value;
-            const timestamp = Date.now();
-            
-            // 1. Capture de l'image réelle
             const captureCanvas = document.getElementById('captureCanvas');
             captureCanvas.width = video.videoWidth;
             captureCanvas.height = video.videoHeight;
             const ctx = captureCanvas.getContext('2d');
             ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
-            const imgData = captureCanvas.toDataURL('image/jpeg', 0.8);
-
-            // 2. Création du PDF
+            
             const pdf = new jsPDF({
                 orientation: video.videoWidth > video.videoHeight ? 'l' : 'p',
                 unit: 'px',
                 format: [video.videoWidth, video.videoHeight]
             });
-            pdf.addImage(imgData, 'JPEG', 0, 0, video.videoWidth, video.videoHeight);
+            pdf.addImage(captureCanvas.toDataURL('image/jpeg', 0.8), 'JPEG', 0, 0, video.videoWidth, video.videoHeight);
             
-            // 3. Téléchargement réel (ira dans /Downloads)
-            const fileName = `DocScanner_${cat.split(' ')[0]}_${timestamp}.pdf`;
+            const fileName = `Doc_${cat.split(' ')[0]}_${Date.now()}.pdf`;
             pdf.save(fileName);
 
-            // 4. Persistance dans le LocalStorage pour l'historique
-            const scan = { id: timestamp, cat: cat, date: new Date().toLocaleDateString('fr-FR'), file: fileName };
             let scans = JSON.parse(localStorage.getItem('doc_scans')) || [];
-            scans.unshift(scan);
+            scans.unshift({ id: Date.now(), cat: cat, date: new Date().toLocaleDateString('fr-FR'), file: fileName });
             localStorage.setItem('doc_scans', JSON.stringify(scans));
-            
             renderHistory();
-            alert("PDF généré et envoyé dans vos téléchargements !");
         }
 
         function renderHistory() {
             const scans = JSON.parse(localStorage.getItem('doc_scans')) || [];
             document.getElementById('storageHistory').innerHTML = scans.map(s => `
-                <div class="bg-slate-800 p-4 rounded-xl border-l-4 border-green-500 flex justify-between items-center text-xs">
-                    <div>
-                        <p class="font-bold text-slate-300">${s.cat}</p>
-                        <p class="text-slate-500">${s.file}</p>
-                    </div>
+                <div class="bg-slate-800 p-4 rounded-xl border-l-4 border-green-500 flex justify-between items-center text-xs mb-2">
+                    <div><p class="font-bold text-slate-300">${s.cat}</p><p class="text-slate-500">${s.file}</p></div>
                     <span class="text-slate-600">${s.date}</span>
-                </div>
-            `).join('');
+                </div>`).join('');
         }
         renderHistory();
     </script>
