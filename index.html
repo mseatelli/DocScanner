@@ -95,7 +95,7 @@
                 if (!video.srcObject) return;
                 cap.read(src);
                 cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
-                cv.Canny(dst, dst, 100, 200);
+                cv.Canny(dst, dst, 50, 150);
 
                 let contours = new cv.MatVector();
                 let hierarchy = new cv.Mat();
