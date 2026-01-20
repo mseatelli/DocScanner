@@ -99,13 +99,21 @@
             dst = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC1);
             cap = new cv.VideoCapture(video);
             
-            function loop() {
+           function loop() {
                 try {
                     cap.read(src);
                     cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
-                    cv.GaussianBlur(dst, dst, new cv.Size(7, 7), 0);
-                    cv.Canny(dst, dst, 50, 150);
                     
+                    // 1. On floute pour ignorer le texte
+                    cv.GaussianBlur(dst, dst, new cv.Size(9, 9), 0);
+                    
+                    // 2. On détecte les bords (seuils plus bas = plus sensible)
+                    cv.Canny(dst, dst, 30, 90);
+                    
+                    // 3. ON AJOUTE : On épaissit les lignes pour fermer le rectangle
+                    let M = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
+                    cv.dilate(dst, dst, M);
+
                     let contours = new cv.MatVector();
                     let hierarchy = new cv.Mat();
                     cv.findContours(dst, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
@@ -120,9 +128,12 @@
                     for (let i = 0; i < contours.size(); ++i) {
                         let cnt = contours.get(i);
                         let area = cv.contourArea(cnt);
-                        if (area > 8000) {
+                        // On baisse le seuil de surface à 5000 au lieu de 8000
+                        if (area > 5000) {
                             let approx = new cv.Mat();
-                            cv.approxPolyDP(cnt, approx, 0.02 * cv.arcLength(cnt, true), true);
+                            // On rend l'approximation plus flexible (0.03 au lieu de 0.02)
+                            cv.approxPolyDP(cnt, approx, 0.03 * cv.arcLength(cnt, true), true);
+                            
                             if (approx.rows === 4 && area > maxArea) {
                                 maxArea = area;
                                 if(bestApprox) bestApprox.delete();
@@ -133,26 +144,30 @@
 
                     if (bestApprox) {
                         ctx.beginPath();
-                        ctx.strokeStyle = "#22c55e"; // Vert Tailwind
-                        ctx.lineWidth = 4;
+                        ctx.strokeStyle = "#00FF00";
+                        ctx.lineWidth = 6;
+                        ctx.lineJoin = "round";
                         let pts = bestApprox.data32S;
                         const sx = canvas.width / video.videoWidth;
                         const sy = canvas.height / video.videoHeight;
                         ctx.moveTo(pts[0] * sx, pts[1] * sy);
                         for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i] * sx, pts[i+1] * sy);
-                        ctx.closePath(); ctx.stroke();
-                        document.getElementById('aiOverlay').innerText = "DOC DÉTECTÉ ✅";
+                        ctx.closePath(); 
+                        ctx.stroke();
+                        
+                        // Petit effet de remplissage pour confirmer la détection
+                        ctx.fillStyle = "rgba(0, 255, 0, 0.1)";
+                        ctx.fill();
+
+                        document.getElementById('aiOverlay').innerText = "DOCUMENT DÉTECTÉ ✅";
                         bestApprox.delete();
                     } else {
-                        document.getElementById('aiOverlay').innerText = "SCANNER ACTIF";
+                        document.getElementById('aiOverlay').innerText = "CHERCHEZ LES BORDS DU DOC...";
                     }
-                    contours.delete(); hierarchy.delete();
-                } catch (e) { }
+                    contours.delete(); hierarchy.delete(); M.delete();
+                } catch (e) { console.error(e); }
                 requestAnimationFrame(loop);
             }
-            requestAnimationFrame(loop);
-        }
-
         async function captureAndDownload() {
             const cat = document.getElementById('catSelect').value;
             const customName = document.getElementById('docFileName').value.trim();
