@@ -4,12 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>DocScanner Pro Warp</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css"></script>
     <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="onOpenCvLoaded();"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
         #canvasOutput {
-            background-color: rgba(255, 0, 0, 0.1) !important; /* Fond rouge transparent pour debug */
+            /* Fond semi-transparent pour vérifier la position du canvas */
+            background-color: rgba(0, 0, 255, 0.05);
         }
     </style>
 </head>
@@ -65,13 +66,16 @@
 
         async function initCamera() {
             try {
-                streamRef = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1920 } }, audio: false });
+                streamRef = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
                 video.srcObject = streamRef;
                 video.play();
                 const track = streamRef.getVideoTracks()[0];
                 const capabilities = track.getCapabilities();
                 if (capabilities.torch) document.getElementById('torchBtn').classList.remove('hidden');
-            } catch (err) { console.error("Accès caméra refusé."); }
+            } catch (err) {
+                console.error("Erreur caméra :", err);
+                alert("Accès caméra refusé : " + err.message);
+            }
         }
 
         async function toggleTorch() {
@@ -89,7 +93,10 @@
         }
 
         function startEngine() {
-            if (video.videoWidth === 0) { setTimeout(startEngine, 100); return; }
+            if (video.videoWidth === 0) {
+                setTimeout(startEngine, 100);
+                return;
+            }
             src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
             dst = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC1);
             cap = new cv.VideoCapture(video);
@@ -98,14 +105,16 @@
                 try {
                     cap.read(src);
                     cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
-                    cv.GaussianBlur(dst, dst, new cv.Size(9, 9), 0);
-                    cv.Canny(dst, dst, 35, 100);
-                    let M = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
+                    cv.GaussianBlur(dst, dst, new cv.Size(5, 5), 0);
+                    // Seuils de Canny réduits pour détecter plus de contours
+                    cv.Canny(dst, dst, 10, 30);
+                    let M = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
                     cv.dilate(dst, dst, M);
 
                     let contours = new cv.MatVector();
                     let hierarchy = new cv.Mat();
-                    cv.findContours(dst, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+                    // Utilisation de RETR_TREE pour détecter tous les contours
+                    cv.findContours(dst, contours, hierarchy, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE);
 
                     const canvas = document.getElementById('canvasOutput');
                     const ctx = canvas.getContext('2d');
@@ -115,8 +124,8 @@
 
                     // Rectangle de test (pour vérifier que le canvas est visible)
                     ctx.strokeStyle = "#FF0000";
-                    ctx.lineWidth = 5;
-                    ctx.strokeRect(10, 10, 100, 100);
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(10, 10, 50, 50);
 
                     let maxArea = 0;
                     let found = false;
@@ -124,24 +133,41 @@
                     for (let i = 0; i < contours.size(); ++i) {
                         let cnt = contours.get(i);
                         let area = cv.contourArea(cnt);
-                        if (area > 8000) {
+                        // Seuil d'aire réduit pour détecter les petits contours
+                        if (area > 1000) {
                             let approx = new cv.Mat();
-                            cv.approxPolyDP(cnt, approx, 0.03 * cv.arcLength(cnt, true), true);
+                            // Approximation plus précise des contours
+                            cv.approxPolyDP(cnt, approx, 0.02 * cv.arcLength(cnt, true), true);
+
+                            // Dessiner TOUS les contours en bleu (pour debug)
+                            ctx.beginPath();
+                            ctx.strokeStyle = "#0000FF";
+                            ctx.lineWidth = 2;
+                            let pts = approx.data32S;
+                            const sx = canvas.width / video.videoWidth;
+                            const sy = canvas.height / video.videoHeight;
+                            ctx.moveTo(pts[0] * sx, pts[1] * sy);
+                            for (let j = 2; j < pts.length; j += 2) {
+                                ctx.lineTo(pts[j] * sx, pts[j + 1] * sy);
+                            }
+                            ctx.closePath();
+                            ctx.stroke();
+
+                            // Conserver le plus grand contour à 4 côtés (rectangle)
                             if (approx.rows === 4 && area > maxArea) {
                                 maxArea = area;
-                                if(lastBestApprox) lastBestApprox.delete();
+                                if (lastBestApprox) lastBestApprox.delete();
                                 lastBestApprox = approx.clone();
                                 found = true;
 
-                                // Dessin du cadre (en rouge et plus épais)
+                                // Dessiner le cadre final en rouge et épais
                                 ctx.beginPath();
                                 ctx.strokeStyle = "#FF0000";
-                                ctx.lineWidth = 10;
-                                let pts = approx.data32S;
-                                const sx = canvas.width / video.videoWidth;
-                                const sy = canvas.height / video.videoHeight;
+                                ctx.lineWidth = 5;
                                 ctx.moveTo(pts[0] * sx, pts[1] * sy);
-                                for (let j = 2; j < pts.length; j += 2) ctx.lineTo(pts[j] * sx, pts[j+1] * sy);
+                                for (let j = 2; j < pts.length; j += 2) {
+                                    ctx.lineTo(pts[j] * sx, pts[j + 1] * sy);
+                                }
                                 ctx.closePath();
                                 ctx.stroke();
                             }
@@ -149,11 +175,13 @@
                         }
                     }
 
-                    console.log("Contour trouvé ?", found, "Aire max :", maxArea); // Debug
+                    console.log("Contour trouvé ?", found, "Aire max :", maxArea);
                     document.getElementById('aiOverlay').innerText = found ? "CADRE PRÊT ✅" : "CHERCHEZ LES BORDS...";
-                    contours.delete(); hierarchy.delete(); M.delete();
+                    contours.delete();
+                    hierarchy.delete();
+                    M.delete();
                 } catch (e) {
-                    console.error("Erreur OpenCV :", e);
+                    console.error("Erreur dans loop :", e);
                 }
                 requestAnimationFrame(loop);
             }
@@ -161,7 +189,10 @@
         }
 
         function captureAndWarp() {
-            if (!lastBestApprox) { alert("Cadre non détecté. Stabilisez le document."); return; }
+            if (!lastBestApprox) {
+                alert("Cadre non détecté. Stabilisez le document et assurez-vous qu'il est bien éclairé.");
+                return;
+            }
 
             const width = video.videoWidth;
             const height = video.videoHeight;
@@ -191,7 +222,10 @@
             localStorage.setItem('doc_scans', JSON.stringify(scans));
 
             renderHistory();
-            warpedDst.delete(); pts1.delete(); pts2.delete(); M.delete();
+            warpedDst.delete();
+            pts1.delete();
+            pts2.delete();
+            M.delete();
         }
 
         function renderHistory() {
@@ -203,7 +237,8 @@
                         <p class="text-[10px] text-slate-500 uppercase font-bold">${s.cat}</p>
                     </div>
                     <span class="text-slate-600 text-[10px]">${s.date}</span>
-                </div>`).join('');
+                </div>
+            `).join('');
         }
         renderHistory();
     </script>
