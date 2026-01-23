@@ -3,38 +3,48 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DocScanner Ultra Clear</title>
+    <title>DocScanner AI Suite</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </head>
-<body class="bg-slate-900 text-white">
+<body class="bg-slate-900 text-white font-sans overflow-x-hidden">
 
     <div class="max-w-lg mx-auto p-4 flex flex-col min-h-screen">
         <header class="py-4 flex justify-between items-center">
-            <h1 class="text-2xl font-black text-blue-500 italic uppercase">Scanner <span class="text-white text-[10px] bg-blue-600 px-2 rounded">PRO</span></h1>
-            <div id="status" class="text-[10px] bg-green-600 px-2 py-1 rounded font-bold">IA ACTIVE</div>
+            <h1 class="text-2xl font-black text-blue-500 italic uppercase">DocScanner <span class="text-white text-[10px] bg-blue-600 px-2 py-1 rounded not-italic ml-1">V3</span></h1>
+            <button id="torchBtn" onclick="toggleTorch()" class="hidden bg-slate-800 p-2 rounded-xl border border-slate-700">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+            </button>
         </header>
 
-        <div class="relative w-full aspect-[3/4] bg-black rounded-3xl overflow-hidden border-4 border-blue-900/30">
+        <div class="relative w-full aspect-[3/4] bg-black rounded-3xl overflow-hidden border-2 border-slate-700 shadow-2xl">
             <video id="webcam" class="absolute inset-0 w-full h-full object-cover" autoplay playsinline muted></video>
-            <canvas id="output_canvas" class="absolute inset-0 w-full h-full z-10"></canvas>
-            <div id="aiOverlay" class="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 bg-blue-600 px-4 py-2 rounded-full text-xs font-bold shadow-xl animate-pulse">
-                ALIGNEZ LE DOCUMENT
-            </div>
+            <canvas id="output_canvas" class="absolute inset-0 w-full h-full z-10 pointer-events-none"></canvas>
+            <div id="aiOverlay" class="absolute top-4 left-4 z-20 bg-black/60 px-3 py-1 rounded-full text-[10px] font-bold text-blue-400 border border-blue-500/50 uppercase tracking-widest italic">Analyse IA...</div>
+            <div class="absolute inset-0 border-[40px] border-black/40 pointer-events-none z-10"></div>
         </div>
 
         <div class="mt-6 space-y-4">
-            <div class="flex gap-2">
-                 <button onclick="setMode('color')" class="flex-1 bg-slate-800 p-2 rounded-lg text-[10px] font-bold border border-slate-700">COULEUR</button>
-                 <button onclick="setMode('bw')" class="flex-1 bg-blue-600 p-2 rounded-lg text-[10px] font-bold border border-blue-400">N&B SCAN</button>
+            <div class="bg-slate-800 p-4 rounded-2xl space-y-3 shadow-inner">
+                <input type="text" id="docFileName" placeholder="Nom du document (Ex: Bosch_2026)" class="w-full bg-slate-700 border-none p-3 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                <select id="catSelect" class="w-full bg-slate-700 border-none p-3 rounded-lg text-sm outline-none"></select>
+                
+                <div class="flex gap-2">
+                    <button onclick="setMode('color')" id="btn-color" class="flex-1 py-2 rounded-lg text-[10px] font-bold border border-slate-600 bg-slate-700">COULEUR</button>
+                    <button onclick="setMode('scan')" id="btn-scan" class="flex-1 py-2 rounded-lg text-[10px] font-bold border border-blue-500 bg-blue-600">SCAN N&B</button>
+                </div>
             </div>
-            <button id="captureBtn" class="w-full bg-white text-slate-900 py-5 rounded-2xl font-black text-lg shadow-2xl active:scale-95 transition-all">
-                NETTOYER ET SAUVER (PDF)
+
+            <button id="captureBtn" class="w-full bg-blue-600 py-5 rounded-2xl font-black text-lg shadow-xl active:scale-95 transition-all">
+                CAPTURER LE PDF
             </button>
         </div>
 
-        <div id="storageHistory" class="mt-8 space-y-2 pb-10"></div>
+        <div class="mt-8 pb-10">
+            <h2 class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4 italic">Historique des scans</h2>
+            <div id="storageHistory" class="space-y-2"></div>
+        </div>
     </div>
 
     <canvas id="procCanvas" style="display:none;"></canvas>
@@ -45,30 +55,46 @@
         const video = document.getElementById("webcam");
         const canvasElement = document.getElementById("output_canvas");
         const canvasCtx = canvasElement.getContext("2d");
-        let objectDetector;
-        let lastBox = null;
-        let scanMode = 'bw';
+        let objectDetector, streamRef, lastBox = null, scanMode = 'scan', torchOn = false;
 
-        window.setMode = (m) => { scanMode = m; };
+        const categories = ["01 — IDENTITÉ", "02 — ÉTAT_CIVIL", "03 — ADMINISTRATION", "04 — FINANCES", "05 — FISCALITÉ", "06 — EMPLOI_RH", "07 — PROFESSIONNEL", "08 — LOGEMENT", "09 — ASSURANCE", "10 — SANTÉ", "11 — ÉDUCATION", "12 — JURIDIQUE", "13 — ACHATS", "14 — TRANSPORT", "15 — ÉNERGIE_TÉLÉCOM", "16 — FAMILLE", "17 — CORRESPONDANCE", "18 — PERSONNEL", "19 — ARCHIVES", "20 — AUTRE"];
+        
+        // Init Interface
+        const select = document.getElementById('catSelect');
+        categories.forEach(cat => {
+            let opt = document.createElement('option');
+            opt.value = cat; opt.innerHTML = cat;
+            if(cat.startsWith("13")) opt.selected = true;
+            select.appendChild(opt);
+        });
+
+        window.setMode = (m) => {
+            scanMode = m;
+            document.getElementById('btn-color').className = m === 'color' ? "flex-1 py-2 rounded-lg text-[10px] font-bold border border-blue-500 bg-blue-600" : "flex-1 py-2 rounded-lg text-[10px] font-bold border border-slate-600 bg-slate-700";
+            document.getElementById('btn-scan').className = m === 'scan' ? "flex-1 py-2 rounded-lg text-[10px] font-bold border border-blue-500 bg-blue-600" : "flex-1 py-2 rounded-lg text-[10px] font-bold border border-slate-600 bg-slate-700";
+        };
 
         const init = async () => {
             const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.2/wasm");
             objectDetector = await ObjectDetector.createFromOptions(vision, {
-                baseOptions: {
-                    modelAssetPath: `https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite`,
-                    delegate: "GPU"
-                },
-                scoreThreshold: 0.3,
-                runningMode: "VIDEO"
+                baseOptions: { modelAssetPath: `https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite`, delegate: "GPU" },
+                scoreThreshold: 0.3, runningMode: "VIDEO"
             });
             startCamera();
         };
 
         async function startCamera() {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: 1280 } });
-            video.srcObject = stream;
+            streamRef = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: 1280 } });
+            video.srcObject = streamRef;
             video.addEventListener("loadeddata", predict);
+            const track = streamRef.getVideoTracks()[0];
+            if (track.getCapabilities().torch) document.getElementById('torchBtn').classList.remove('hidden');
         }
+
+        window.toggleTorch = async () => {
+            torchOn = !torchOn;
+            await streamRef.getVideoTracks()[0].applyConstraints({ advanced: [{ torch: torchOn }] });
+        };
 
         async function predict() {
             const detections = await objectDetector.detectForVideo(video, performance.now());
@@ -77,85 +103,76 @@
             canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
             if (detections.detections.length > 0) {
-                const box = detections.detections[0].boundingBox;
-                lastBox = box;
-                
-                // Dessin du viseur "Target"
-                const x = (box.originX / video.videoWidth) * canvasElement.width;
-                const y = (box.originY / video.videoHeight) * canvasElement.height;
-                const w = (box.width / video.videoWidth) * canvasElement.width;
-                const h = (box.height / video.videoHeight) * canvasElement.height;
-
-                canvasCtx.strokeStyle = "#3b82f6";
-                canvasCtx.lineWidth = 2;
+                lastBox = detections.detections[0].boundingBox;
+                const x = (lastBox.originX / video.videoWidth) * canvasElement.width;
+                const y = (lastBox.originY / video.videoHeight) * canvasElement.height;
+                const w = (lastBox.width / video.videoWidth) * canvasElement.width;
+                const h = (lastBox.height / video.videoHeight) * canvasElement.height;
+                canvasCtx.strokeStyle = "#3b82f6"; canvasCtx.lineWidth = 3;
                 canvasCtx.strokeRect(x, y, w, h);
-                // Coins marqués
-                canvasCtx.fillStyle = "#3b82f6";
-                canvasCtx.fillRect(x-5, y-5, 20, 5); canvasCtx.fillRect(x-5, y-5, 5, 20); // TL
-                canvasCtx.fillRect(x+w-15, y-5, 20, 5); canvasCtx.fillRect(x+w, y-5, 5, 20); // TR
+                document.getElementById('aiOverlay').innerText = "DOC DÉTECTÉ ✅";
             }
             window.requestAnimationFrame(predict);
         }
 
         document.getElementById('captureBtn').onclick = () => {
-            if (!lastBox) return alert("Document non détecté");
+            if (!lastBox) return alert("IA : Document non détecté");
 
             const { jsPDF } = window.jspdf;
             const proc = document.getElementById('procCanvas');
             const pCtx = proc.getContext('2d');
-
-            // 1. On n'extrait QUE la zone détectée par l'IA
-            proc.width = lastBox.width;
-            proc.height = lastBox.height;
+            
+            // On resserre légèrement pour éliminer le fond (Crop)
+            const margin = 10;
+            proc.width = lastBox.width - (margin * 2);
+            proc.height = lastBox.height - (margin * 2);
             
             pCtx.drawImage(video, 
-                lastBox.originX, lastBox.originY, lastBox.width, lastBox.height,
-                0, 0, lastBox.width, lastBox.height
+                lastBox.originX + margin, lastBox.originY + margin, lastBox.width - (margin * 2), lastBox.height - (margin * 2),
+                0, 0, proc.width, proc.height
             );
 
-            // 2. Traitement d'image pour la lisibilité (Filtre Scan)
-            if (scanMode === 'bw') {
+            if (scanMode === 'scan') {
                 let imgData = pCtx.getImageData(0, 0, proc.width, proc.height);
                 let d = imgData.data;
                 for (let i = 0; i < d.length; i += 4) {
-                    let r = d[i], g = d[i+1], b = d[i+2];
-                    // Augmentation contraste + Seuil
-                    let gray = (0.2126 * r + 0.7152 * g + 0.0722 * b);
-                    let v = (gray > 120) ? 255 : gray * 0.8; // Blanc pur pour le papier, assombrit le texte
+                    let gray = 0.3 * d[i] + 0.59 * d[i+1] + 0.11 * d[i+2];
+                    let v = (gray > 135) ? 255 : 0; // Seuil agressif
                     d[i] = d[i+1] = d[i+2] = v;
                 }
                 pCtx.putImageData(imgData, 0, 0);
             }
 
-            const pdf = new jsPDF({
-                orientation: proc.width > proc.height ? 'l' : 'p',
-                unit: 'px',
-                format: [proc.width, proc.height]
-            });
-            pdf.addImage(proc.toDataURL('image/jpeg', 0.8), 'JPEG', 0, 0, proc.width, proc.height);
-            pdf.save("Scan_Nettoyé.pdf");
+            const pdf = new jsPDF({ orientation: proc.width > proc.height ? 'l' : 'p', unit: 'px', format: [proc.width, proc.height] });
+            pdf.addImage(proc.toDataURL('image/jpeg', 0.9), 'JPEG', 0, 0, proc.width, proc.height);
             
-            saveToHistory("Scan_" + new Date().toLocaleTimeString());
+            const fileName = (document.getElementById('docFileName').value || "Scan") + ".pdf";
+            pdf.save(fileName);
+            
+            saveHistory(fileName, document.getElementById('catSelect').value);
         };
 
-        function saveToHistory(name) {
-            let scans = JSON.parse(localStorage.getItem('doc_scans')) || [];
-            scans.unshift({ id: Date.now(), name: name, date: new Date().toLocaleDateString() });
-            localStorage.setItem('doc_scans', JSON.stringify(scans.slice(0, 10)));
+        function saveHistory(name, cat) {
+            let history = JSON.parse(localStorage.getItem('doc_scans')) || [];
+            history.unshift({ id: Date.now(), name, cat, date: new Date().toLocaleDateString('fr-FR') });
+            localStorage.setItem('doc_scans', JSON.stringify(history.slice(0, 20)));
             renderHistory();
         }
 
         function renderHistory() {
             const scans = JSON.parse(localStorage.getItem('doc_scans')) || [];
             document.getElementById('storageHistory').innerHTML = scans.map(s => `
-                <div class="bg-slate-800 p-3 rounded-xl flex justify-between items-center text-[10px]">
-                    <span class="font-bold uppercase">${s.name}</span><span class="opacity-50">${s.date}</span>
+                <div class="bg-slate-800 p-4 rounded-2xl flex justify-between items-center border-l-4 border-blue-500 shadow-lg">
+                    <div class="overflow-hidden">
+                        <p class="font-bold text-slate-200 truncate text-sm">${s.name}</p>
+                        <p class="text-[9px] text-blue-400 font-bold uppercase">${s.cat}</p>
+                    </div>
+                    <span class="text-[10px] text-slate-500 font-mono">${s.date}</span>
                 </div>
             `).join('');
         }
 
-        init();
-        renderHistory();
+        init(); renderHistory();
     </script>
 </body>
 </html>
