@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DocScanner Pro Warp</title>
+    <title>DocScanner Pro</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script async src="https://docs.opencv.org/4.5.4/opencv.js" onload="onOpenCvLoaded();"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -13,26 +13,25 @@
     <div class="max-w-lg mx-auto p-4 flex flex-col min-h-screen">
         <header class="py-4 flex justify-between items-center">
             <h1 class="text-2xl font-black text-green-500 italic">DocScanner</h1>
-            <div class="flex gap-2">
-                <button id="torchBtn" onclick="toggleTorch()" class="hidden bg-slate-800 p-2 rounded-lg border border-slate-700 active:bg-yellow-500 transition-colors">
+            <div class="flex gap-2 items-center">
+                <button id="torchBtn" onclick="toggleTorch()" class="hidden bg-slate-800 p-2 rounded-lg border border-slate-700">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                 </button>
-                <span id="status" class="text-[10px] bg-yellow-600 px-2 py-1 rounded font-bold uppercase">Initialisation...</span>
+                <span id="status" class="text-[10px] bg-yellow-600 px-2 py-1 rounded font-bold uppercase tracking-tighter">Initialisation...</span>
             </div>
         </header>
 
         <div class="relative w-full aspect-[3/4] bg-black rounded-3xl overflow-hidden border-2 border-slate-700 shadow-2xl">
             <video id="videoInput" class="absolute inset-0 w-full h-full object-cover" autoplay playsinline muted></video>
             <canvas id="canvasOutput" class="absolute inset-0 w-full h-full z-10 pointer-events-none"></canvas>
-            <div id="aiOverlay" class="absolute top-4 left-4 z-20 bg-black/60 px-3 py-1 rounded-full text-[10px] font-bold text-green-400 border border-green-500/50">EN ATTENTE...</div>
+            <div id="aiOverlay" class="absolute top-4 left-4 z-20 bg-black/60 px-3 py-1 rounded-full text-[10px] font-bold text-green-400 border border-green-500/50">FLUX EN ATTENTE...</div>
         </div>
 
         <div class="mt-6 space-y-4">
-            <div class="bg-slate-800 p-4 rounded-2xl shadow-inner space-y-3">
-                <input type="text" id="docFileName" placeholder="Nom du document" class="w-full bg-slate-700 border-none p-3 rounded-lg text-sm text-white focus:ring-2 focus:ring-green-500 outline-none">
-                <select id="catSelect" class="w-full bg-slate-700 border-none p-3 rounded-lg text-sm text-white outline-none"></select>
-            </div>
-            <button onclick="captureAndWarp()" id="captureBtn" class="w-full bg-green-600 py-5 rounded-2xl font-black text-lg active:scale-95 transition-all shadow-lg">SCANNER & REDRESSER</button>
+            <input type="text" id="docFileName" placeholder="Nom du document (Optionnel)" class="w-full bg-slate-800 border-none p-4 rounded-2xl text-white outline-none focus:ring-2 focus:ring-green-500">
+            <button onclick="captureAndWarp()" id="captureBtn" class="w-full bg-green-600 py-5 rounded-2xl font-black text-lg active:scale-95 transition-all shadow-lg">
+                SCANNER LE DOCUMENT
+            </button>
         </div>
 
         <div id="storageHistory" class="mt-8 space-y-2 pb-10"></div>
@@ -42,25 +41,13 @@
 
     <script>
         const { jsPDF } = window.jspdf;
-        const categories = ["01 — IDENTITÉ", "02 — ÉTAT_CIVIL", "03 — ADMINISTRATION", "04 — FINANCES", "05 — FISCALITÉ", "06 — EMPLOI_RH", "07 — PROFESSIONNEL", "08 — LOGEMENT", "09 — ASSURANCE", "10 — SANTÉ", "11 — ÉDUCATION", "12 — JURIDIQUE", "13 — ACHATS", "14 — TRANSPORT", "15 — ÉNERGIE_TÉLÉCOM", "16 — FAMILLE", "17 — CORRESPONDANCE", "18 — PERSONNEL", "19 — ARCHIVES", "20 — AUTRE"];
-        
-        const select = document.getElementById('catSelect');
-        categories.forEach(cat => {
-            let opt = document.createElement('option');
-            opt.value = cat; opt.innerHTML = cat;
-            if(cat.startsWith("13")) opt.selected = true;
-            select.appendChild(opt);
-        });
-
         let video = document.getElementById('videoInput');
         let src, dst, cap, streamRef;
         let lastBestApprox = null;
         let torchOn = false;
         let isEngineRunning = false;
 
-        // Force le lancement de la caméra au chargement
-        window.addEventListener('load', initCamera);
-
+        // 1. Démarrage Caméra Immédiat
         async function initCamera() {
             try {
                 streamRef = await navigator.mediaDevices.getUserMedia({ 
@@ -68,52 +55,52 @@
                     audio: false 
                 });
                 video.srcObject = streamRef;
-                video.onloadedmetadata = () => {
-                    video.play();
-                    checkReadyToStart();
-                };
+                // Force la lecture pour certains navigateurs mobiles
+                await video.play();
+                checkReady();
             } catch (err) {
-                document.getElementById('aiOverlay').innerText = "ERREUR CAMÉRA";
+                document.getElementById('aiOverlay').innerText = "ERREUR ACCÈS CAMÉRA";
             }
         }
 
+        // 2. Callback OpenCV
         function onOpenCvLoaded() {
             cv.onRuntimeInitialized = () => {
                 document.getElementById('status').innerText = "VISION PRÊTE";
-                document.getElementById('status').className = "text-[10px] bg-green-600 px-2 py-1 rounded font-bold";
-                checkReadyToStart();
+                document.getElementById('status').className = "text-[10px] bg-green-600 px-2 py-1 rounded font-bold uppercase";
+                checkReady();
             };
         }
 
-        function checkReadyToStart() {
-            // On ne lance le moteur que si OpenCV est chargé ET que la vidéo tourne
-            if (typeof cv !== 'undefined' && cv.Mat && video.readyState >= 2) {
+        // 3. Vérification de démarrage
+        function checkReady() {
+            if (typeof cv !== 'undefined' && cv.Mat && video.videoWidth > 0) {
                 if (!isEngineRunning) startEngine();
             } else {
-                setTimeout(checkReadyToStart, 300);
+                // On boucle jusqu'à ce que la vidéo ait des dimensions réelles
+                setTimeout(checkReady, 200);
             }
         }
 
         function startEngine() {
             isEngineRunning = true;
-            const width = video.videoWidth;
-            const height = video.videoHeight;
+            document.getElementById('aiOverlay').innerText = "RECHERCHE DOCUMENT...";
             
-            src = new cv.Mat(height, width, cv.CV_8UC4);
-            dst = new cv.Mat(height, width, cv.CV_8UC1);
+            src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+            dst = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC1);
             cap = new cv.VideoCapture(video);
-            
-            // Tenter de détecter le flash
+
+            // Flash support
             const track = streamRef.getVideoTracks()[0];
-            const capabilities = track.getCapabilities();
-            if (capabilities.torch) document.getElementById('torchBtn').classList.remove('hidden');
+            const caps = track.getCapabilities();
+            if (caps.torch) document.getElementById('torchBtn').classList.remove('hidden');
 
             function loop() {
                 try {
                     cap.read(src);
                     cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
-                    cv.GaussianBlur(dst, dst, new cv.Size(7, 7), 0);
-                    cv.Canny(dst, dst, 40, 120);
+                    cv.GaussianBlur(dst, dst, new cv.Size(9, 9), 0);
+                    cv.Canny(dst, dst, 40, 110);
                     
                     let M = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
                     cv.dilate(dst, dst, M);
@@ -136,18 +123,19 @@
                         let area = cv.contourArea(cnt);
                         if (area > 5000) {
                             let approx = new cv.Mat();
-                            cv.approxPolyDP(cnt, approx, 0.02 * cv.arcLength(cnt, true), true);
+                            cv.approxPolyDP(cnt, approx, 0.03 * cv.arcLength(cnt, true), true);
                             if (approx.rows === 4 && area > maxArea) {
                                 maxArea = area;
                                 if(lastBestApprox) lastBestApprox.delete();
                                 lastBestApprox = approx.clone();
                                 found = true;
                                 
+                                // Dessin du cadre vert
                                 ctx.beginPath();
                                 ctx.strokeStyle = "#00FF00"; ctx.lineWidth = 6;
                                 let pts = approx.data32S;
-                                const sx = canvas.width / width;
-                                const sy = canvas.height / height;
+                                const sx = canvas.width / video.videoWidth;
+                                const sy = canvas.height / video.videoHeight;
                                 ctx.moveTo(pts[0] * sx, pts[1] * sy);
                                 for (let j = 2; j < pts.length; j += 2) ctx.lineTo(pts[j] * sx, pts[j+1] * sy);
                                 ctx.closePath(); ctx.stroke();
@@ -156,7 +144,7 @@
                         }
                     }
 
-                    document.getElementById('aiOverlay').innerText = found ? "DOC DÉTECTÉ ✅" : "RECHERCHE DOCUMENT...";
+                    document.getElementById('aiOverlay').innerText = found ? "CADRE DÉTECTÉ ✅" : "CHERCHEZ LES BORDS...";
                     contours.delete(); hierarchy.delete(); M.delete();
                 } catch (e) { }
                 requestAnimationFrame(loop);
@@ -171,40 +159,45 @@
         }
 
         function captureAndWarp() {
-            if (!lastBestApprox) { 
-                alert("Cadre non détecté. Assurez-vous que les 4 coins sont visibles."); 
-                return; 
-            }
-            // Code de Warp identique à la version précédente...
-            const width = video.videoWidth;
-            const height = video.videoHeight;
-            let warpedDst = new cv.Mat(height, width, cv.CV_8UC4);
+            if (!lastBestApprox) { alert("Veuillez bien cadrer le document (cadre vert)"); return; }
+            
+            const w = video.videoWidth;
+            const h = video.videoHeight;
+            let warpedDst = new cv.Mat(h, w, cv.CV_8UC4);
             let pts1 = cv.matFromArray(4, 1, cv.CV_32FC2, lastBestApprox.data32S);
-            let pts2 = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, width, 0, width, height, 0, height]);
+            let pts2 = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, w, 0, w, h, w, h, 0, h]);
+            
+            // Note: l'ordre des points peut varier selon la détection
             let M = cv.getPerspectiveTransform(pts1, pts2);
-            cv.warpPerspective(src, warpedDst, M, new cv.Size(width, height));
+            cv.warpPerspective(src, warpedDst, M, new cv.Size(w, h));
             cv.imshow('warpCanvas', warpedDst);
             
-            const pdf = new jsPDF({ orientation: width > height ? 'l' : 'p', unit: 'px', format: [width, height] });
-            pdf.addImage(document.getElementById('warpCanvas').toDataURL('image/jpeg', 0.9), 'JPEG', 0, 0, width, height);
-            pdf.save(document.getElementById('docFileName').value || "Scan.pdf");
+            const pdf = new jsPDF({ orientation: w > h ? 'l' : 'p', unit: 'px', format: [w, h] });
+            pdf.addImage(document.getElementById('warpCanvas').toDataURL('image/jpeg', 0.9), 'JPEG', 0, 0, w, h);
+            
+            const name = document.getElementById('docFileName').value || "Scan_" + Date.now();
+            pdf.save(name + ".pdf");
 
-            // Sauvegarde historique simplifiée
-            let scans = JSON.parse(localStorage.getItem('doc_scans')) || [];
-            scans.unshift({ id: Date.now(), file: document.getElementById('docFileName').value || "Scan.pdf", date: new Date().toLocaleDateString() });
-            localStorage.setItem('doc_scans', JSON.stringify(scans));
+            // Sauvegarde Favorites / Historique (Local Storage)
+            let history = JSON.parse(localStorage.getItem('doc_scans')) || [];
+            history.unshift({ id: Date.now(), name: name, date: new Date().toLocaleDateString() });
+            localStorage.setItem('doc_scans', JSON.stringify(history));
             renderHistory();
+
             warpedDst.delete(); pts1.delete(); pts2.delete(); M.delete();
         }
 
         function renderHistory() {
             const scans = JSON.parse(localStorage.getItem('doc_scans')) || [];
             document.getElementById('storageHistory').innerHTML = scans.map(s => `
-                <div class="bg-slate-800 p-3 rounded-xl border-l-4 border-green-500 flex justify-between items-center text-xs mb-2">
-                    <p class="font-bold">${s.file}</p><span>${s.date}</span>
-                </div>`).join('');
+                <div class="bg-slate-800 p-4 rounded-2xl flex justify-between items-center text-xs border-l-4 border-green-500 shadow-lg">
+                    <span class="font-bold text-slate-200">${s.name}</span>
+                    <span class="text-slate-500">${s.date}</span>
+                </div>
+            `).join('');
         }
-        renderHistory();
+
+        window.onload = () => { initCamera(); renderHistory(); };
     </script>
 </body>
 </html>
