@@ -82,29 +82,25 @@
             }
         }
 
+       // ... (garder le début inchangé jusqu'à startEngine)
+
         function startEngine() {
             isEngineRunning = true;
-            document.getElementById('aiOverlay').innerText = "RECHERCHE DOCUMENT...";
+            document.getElementById('aiOverlay').innerText = "RECHERCHE... (BOUGEZ LENTEMENT)";
             
             src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
             dst = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC1);
             cap = new cv.VideoCapture(video);
 
-            // Flash support
-            const track = streamRef.getVideoTracks()[0];
-            const caps = track.getCapabilities();
-            if (caps.torch) document.getElementById('torchBtn').classList.remove('hidden');
-
             function loop() {
                 try {
                     cap.read(src);
                     cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
-                    cv.GaussianBlur(dst, dst, new cv.Size(9, 9), 0);
-                    cv.Canny(dst, dst, 40, 110);
                     
-                    let M = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
-                    cv.dilate(dst, dst, M);
-
+                    // On floute énormément pour ne voir que la "masse" blanche du papier
+                    cv.GaussianBlur(dst, dst, new cv.Size(15, 15), 0);
+                    cv.threshold(dst, dst, 120, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+                    
                     let contours = new cv.MatVector();
                     let hierarchy = new cv.Mat();
                     cv.findContours(dst, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
@@ -121,18 +117,23 @@
                     for (let i = 0; i < contours.size(); ++i) {
                         let cnt = contours.get(i);
                         let area = cv.contourArea(cnt);
-                        if (area > 5000) {
+                        
+                        // Si la forme est assez grande (le papier occupe une bonne partie de l'écran)
+                        if (area > 10000) {
                             let approx = new cv.Mat();
-                            cv.approxPolyDP(cnt, approx, 0.03 * cv.arcLength(cnt, true), true);
-                            if (approx.rows === 4 && area > maxArea) {
+                            // On est très tolérant sur les angles (0.05)
+                            cv.approxPolyDP(cnt, approx, 0.05 * cv.arcLength(cnt, true), true);
+                            
+                            // Même si ce n'est pas un rectangle parfait (4 à 6 points acceptés)
+                            if (approx.rows >= 4 && approx.rows <= 6 && area > maxArea) {
                                 maxArea = area;
                                 if(lastBestApprox) lastBestApprox.delete();
                                 lastBestApprox = approx.clone();
                                 found = true;
                                 
-                                // Dessin du cadre vert
+                                // Dessin du cadre
                                 ctx.beginPath();
-                                ctx.strokeStyle = "#00FF00"; ctx.lineWidth = 6;
+                                ctx.strokeStyle = "#00FF00"; ctx.lineWidth = 8;
                                 let pts = approx.data32S;
                                 const sx = canvas.width / video.videoWidth;
                                 const sy = canvas.height / video.videoHeight;
@@ -144,14 +145,13 @@
                         }
                     }
 
-                    document.getElementById('aiOverlay').innerText = found ? "CADRE DÉTECTÉ ✅" : "CHERCHEZ LES BORDS...";
-                    contours.delete(); hierarchy.delete(); M.delete();
+                    document.getElementById('aiOverlay').innerText = found ? "DOCUMENT DÉTECTÉ ✅" : "APPROCHEZ LE DOCUMENT...";
+                    contours.delete(); hierarchy.delete();
                 } catch (e) { }
                 requestAnimationFrame(loop);
             }
             requestAnimationFrame(loop);
         }
-
         async function toggleTorch() {
             const track = streamRef.getVideoTracks()[0];
             torchOn = !torchOn;
