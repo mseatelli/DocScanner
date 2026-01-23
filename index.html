@@ -17,14 +17,14 @@
                 <button id="torchBtn" onclick="toggleTorch()" class="hidden bg-slate-800 p-2 rounded-lg border border-slate-700 active:bg-yellow-500 transition-colors">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                 </button>
-                <span id="status" class="text-[10px] bg-yellow-600 px-2 py-1 rounded font-bold uppercase">IA...</span>
+                <span id="status" class="text-[10px] bg-yellow-600 px-2 py-1 rounded font-bold uppercase">Initialisation...</span>
             </div>
         </header>
 
         <div class="relative w-full aspect-[3/4] bg-black rounded-3xl overflow-hidden border-2 border-slate-700 shadow-2xl">
             <video id="videoInput" class="absolute inset-0 w-full h-full object-cover" autoplay playsinline muted></video>
             <canvas id="canvasOutput" class="absolute inset-0 w-full h-full z-10 pointer-events-none"></canvas>
-            <div id="aiOverlay" class="absolute top-4 left-4 z-20 bg-black/60 px-3 py-1 rounded-full text-[10px] font-bold text-green-400 border border-green-500/50">INIT...</div>
+            <div id="aiOverlay" class="absolute top-4 left-4 z-20 bg-black/60 px-3 py-1 rounded-full text-[10px] font-bold text-green-400 border border-green-500/50">EN ATTENTE...</div>
         </div>
 
         <div class="mt-6 space-y-4">
@@ -56,46 +56,65 @@
         let src, dst, cap, streamRef;
         let lastBestApprox = null;
         let torchOn = false;
+        let isEngineRunning = false;
 
+        // Force le lancement de la caméra au chargement
         window.addEventListener('load', initCamera);
 
         async function initCamera() {
             try {
-                streamRef = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1920 } }, audio: false });
+                streamRef = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment", width: { ideal: 1280 } }, 
+                    audio: false 
+                });
                 video.srcObject = streamRef;
-                video.play();
-                const track = streamRef.getVideoTracks()[0];
-                const capabilities = track.getCapabilities();
-                if (capabilities.torch) document.getElementById('torchBtn').classList.remove('hidden');
-            } catch (err) { console.error("Accès caméra refusé."); }
-        }
-
-        async function toggleTorch() {
-            const track = streamRef.getVideoTracks()[0];
-            torchOn = !torchOn;
-            await track.applyConstraints({ advanced: [{ torch: torchOn }] });
+                video.onloadedmetadata = () => {
+                    video.play();
+                    checkReadyToStart();
+                };
+            } catch (err) {
+                document.getElementById('aiOverlay').innerText = "ERREUR CAMÉRA";
+            }
         }
 
         function onOpenCvLoaded() {
             cv.onRuntimeInitialized = () => {
-                document.getElementById('status').innerText = "VISION ON";
+                document.getElementById('status').innerText = "VISION PRÊTE";
                 document.getElementById('status').className = "text-[10px] bg-green-600 px-2 py-1 rounded font-bold";
-                startEngine();
+                checkReadyToStart();
             };
         }
 
+        function checkReadyToStart() {
+            // On ne lance le moteur que si OpenCV est chargé ET que la vidéo tourne
+            if (typeof cv !== 'undefined' && cv.Mat && video.readyState >= 2) {
+                if (!isEngineRunning) startEngine();
+            } else {
+                setTimeout(checkReadyToStart, 300);
+            }
+        }
+
         function startEngine() {
-            if (video.videoWidth === 0) { setTimeout(startEngine, 100); return; }
-            src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
-            dst = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC1);
+            isEngineRunning = true;
+            const width = video.videoWidth;
+            const height = video.videoHeight;
+            
+            src = new cv.Mat(height, width, cv.CV_8UC4);
+            dst = new cv.Mat(height, width, cv.CV_8UC1);
             cap = new cv.VideoCapture(video);
             
+            // Tenter de détecter le flash
+            const track = streamRef.getVideoTracks()[0];
+            const capabilities = track.getCapabilities();
+            if (capabilities.torch) document.getElementById('torchBtn').classList.remove('hidden');
+
             function loop() {
                 try {
                     cap.read(src);
                     cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
-                    cv.GaussianBlur(dst, dst, new cv.Size(9, 9), 0);
-                    cv.Canny(dst, dst, 35, 100);
+                    cv.GaussianBlur(dst, dst, new cv.Size(7, 7), 0);
+                    cv.Canny(dst, dst, 40, 120);
+                    
                     let M = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
                     cv.dilate(dst, dst, M);
 
@@ -115,21 +134,20 @@
                     for (let i = 0; i < contours.size(); ++i) {
                         let cnt = contours.get(i);
                         let area = cv.contourArea(cnt);
-                        if (area > 8000) {
+                        if (area > 5000) {
                             let approx = new cv.Mat();
-                            cv.approxPolyDP(cnt, approx, 0.03 * cv.arcLength(cnt, true), true);
+                            cv.approxPolyDP(cnt, approx, 0.02 * cv.arcLength(cnt, true), true);
                             if (approx.rows === 4 && area > maxArea) {
                                 maxArea = area;
                                 if(lastBestApprox) lastBestApprox.delete();
                                 lastBestApprox = approx.clone();
                                 found = true;
                                 
-                                // Dessin du cadre
                                 ctx.beginPath();
-                                ctx.strokeStyle = "#00FF00"; ctx.lineWidth = 5;
+                                ctx.strokeStyle = "#00FF00"; ctx.lineWidth = 6;
                                 let pts = approx.data32S;
-                                const sx = canvas.width / video.videoWidth;
-                                const sy = canvas.height / video.videoHeight;
+                                const sx = canvas.width / width;
+                                const sy = canvas.height / height;
                                 ctx.moveTo(pts[0] * sx, pts[1] * sy);
                                 for (let j = 2; j < pts.length; j += 2) ctx.lineTo(pts[j] * sx, pts[j+1] * sy);
                                 ctx.closePath(); ctx.stroke();
@@ -138,7 +156,7 @@
                         }
                     }
 
-                    document.getElementById('aiOverlay').innerText = found ? "CADRE PRÊT ✅" : "CHERCHEZ LES BORDS...";
+                    document.getElementById('aiOverlay').innerText = found ? "DOC DÉTECTÉ ✅" : "RECHERCHE DOCUMENT...";
                     contours.delete(); hierarchy.delete(); M.delete();
                 } catch (e) { }
                 requestAnimationFrame(loop);
@@ -146,41 +164,35 @@
             requestAnimationFrame(loop);
         }
 
-        function captureAndWarp() {
-            if (!lastBestApprox) { alert("Cadre non détecté. Stabilisez le document."); return; }
+        async function toggleTorch() {
+            const track = streamRef.getVideoTracks()[0];
+            torchOn = !torchOn;
+            await track.applyConstraints({ advanced: [{ torch: torchOn }] });
+        }
 
+        function captureAndWarp() {
+            if (!lastBestApprox) { 
+                alert("Cadre non détecté. Assurez-vous que les 4 coins sont visibles."); 
+                return; 
+            }
+            // Code de Warp identique à la version précédente...
             const width = video.videoWidth;
             const height = video.videoHeight;
-            
-            // Calcul du redressement (Warp)
             let warpedDst = new cv.Mat(height, width, cv.CV_8UC4);
             let pts1 = cv.matFromArray(4, 1, cv.CV_32FC2, lastBestApprox.data32S);
-            
-            // Ordonner les points (TL, TR, BR, BL)
             let pts2 = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, width, 0, width, height, 0, height]);
             let M = cv.getPerspectiveTransform(pts1, pts2);
             cv.warpPerspective(src, warpedDst, M, new cv.Size(width, height));
-
-            // Affichage sur canvas caché pour export PDF
             cv.imshow('warpCanvas', warpedDst);
             
-            const cat = document.getElementById('catSelect').value;
-            const customName = document.getElementById('docFileName').value.trim();
-            const fileName = customName ? `${customName}.pdf` : `Scan_${Date.now()}.pdf`;
-
-            const pdf = new jsPDF({
-                orientation: width > height ? 'l' : 'p',
-                unit: 'px',
-                format: [width, height]
-            });
+            const pdf = new jsPDF({ orientation: width > height ? 'l' : 'p', unit: 'px', format: [width, height] });
             pdf.addImage(document.getElementById('warpCanvas').toDataURL('image/jpeg', 0.9), 'JPEG', 0, 0, width, height);
-            pdf.save(fileName);
+            pdf.save(document.getElementById('docFileName').value || "Scan.pdf");
 
-            // Save History
+            // Sauvegarde historique simplifiée
             let scans = JSON.parse(localStorage.getItem('doc_scans')) || [];
-            scans.unshift({ id: Date.now(), cat: cat, date: new Date().toLocaleDateString('fr-FR'), file: fileName });
+            scans.unshift({ id: Date.now(), file: document.getElementById('docFileName').value || "Scan.pdf", date: new Date().toLocaleDateString() });
             localStorage.setItem('doc_scans', JSON.stringify(scans));
-            
             renderHistory();
             warpedDst.delete(); pts1.delete(); pts2.delete(); M.delete();
         }
@@ -188,12 +200,8 @@
         function renderHistory() {
             const scans = JSON.parse(localStorage.getItem('doc_scans')) || [];
             document.getElementById('storageHistory').innerHTML = scans.map(s => `
-                <div class="bg-slate-800 p-4 rounded-xl border-l-4 border-green-500 flex justify-between items-center text-xs mb-2 shadow-lg">
-                    <div class="flex-1 overflow-hidden mr-2">
-                        <p class="font-bold text-slate-200 truncate">${s.file}</p>
-                        <p class="text-[10px] text-slate-500 uppercase font-bold">${s.cat}</p>
-                    </div>
-                    <span class="text-slate-600 text-[10px]">${s.date}</span>
+                <div class="bg-slate-800 p-3 rounded-xl border-l-4 border-green-500 flex justify-between items-center text-xs mb-2">
+                    <p class="font-bold">${s.file}</p><span>${s.date}</span>
                 </div>`).join('');
         }
         renderHistory();
